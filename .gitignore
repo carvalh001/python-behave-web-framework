@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Behave
+reports/
+*.pyc
+
+# Sistema
+.DS_Store
+Thumbs.db
+.env
+
+# Arquivos temporários
+*.log
+*.tmp
+stdout
+*.plan.md
+
+# Manter estrutura mas ignorar conteúdo
+reports/*
+!reports/.gitkeep

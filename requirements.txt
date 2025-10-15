@@ -1,0 +1,26 @@
+# Framework de Testes BDD
+behave
+
+# Automação de Navegador Web
+selenium
+
+# Gerenciador automático do WebDriver (ChromeDriver, etc.)
+webdriver-manager
+
+# Cliente HTTP para fazer chamadas de API
+requests
+
+# Gerenciamento de variáveis de ambiente (.env)
+python-dotenv
+
+# Gerador de relatórios HTML para o Behave
+behave-html-formatter
+
+# Biblioteca para informações do sistema (CPU, RAM, etc.)
+psutil>=5.9.0
+
+# Bibliotecas para gravação de vídeo
+opencv-python>=4.8.0
+numpy>=1.24.0
+pyautogui>=0.9.54
+Pillow>=10.0.0
