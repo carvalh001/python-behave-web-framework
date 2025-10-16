@@ -207,6 +207,11 @@ class GerenciadorDeConfiguracao:
         return self._obter_booleano('SCREENSHOT_EM_TODOS_PASSOS', False)
     
     @property
+    def screenshot_ultimo_passo(self):
+        """Se deve capturar screenshot apenas no último passo de cada cenário"""
+        return self._obter_booleano('SCREENSHOT_ULTIMO_PASSO', False)
+    
+    @property
     def api_modo_mock(self):
         """Se as chamadas de API devem usar dados mockados"""
         return self._obter_booleano('API_MODO_MOCK', True)

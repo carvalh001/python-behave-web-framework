@@ -41,13 +41,23 @@ def before_scenario(context, scenario):
     
     context.gerenciador_evidencias.iniciar_contagem_passos()
     context.gerenciador_evidencias.iniciar_gravacao_video(context.driver, scenario.name)
+    
+    # Rastreia informações do cenário para captura de screenshot no último passo
+    context.cenario_atual = scenario
+    context.indice_passo_atual = 0
 
 
 def after_step(context, step):
     """
     Executado APÓS cada passo (step).
     Captura screenshot automaticamente se o passo falhar.
+    Captura screenshot em todos os passos se configurado.
+    Captura screenshot no último passo se configurado.
     """
+    # Incrementa índice do passo atual
+    context.indice_passo_atual += 1
+    
+    # Captura screenshot em caso de falha
     if step.status in ["failed", "error"]:
         nome_arquivo_screenshot = context.gerenciador_evidencias.capturar_screenshot_falha(
             context.driver,
@@ -57,6 +67,33 @@ def after_step(context, step):
         if nome_arquivo_screenshot and not hasattr(step, 'screenshots'):
             step.screenshots = []
             step.screenshots.append(nome_arquivo_screenshot)
+    
+    # Verifica se é o último passo do cenário
+    total_passos = len(context.cenario_atual.steps)
+    eh_ultimo_passo = (context.indice_passo_atual == total_passos)
+    
+    # Decide qual screenshot capturar baseado na configuração
+    nome_arquivo_screenshot = None
+    
+    # Prioridade: último passo > todos os passos > falhas (já capturadas acima)
+    if eh_ultimo_passo and context.configuracao.screenshot_ultimo_passo:
+        nome_arquivo_screenshot = context.gerenciador_evidencias.capturar_screenshot_ultimo_passo(
+            context.driver,
+            context.cenario_atual.name,
+            step.name
+        )
+    elif context.configuracao.screenshot_em_todos_passos:
+        nome_arquivo_screenshot = context.gerenciador_evidencias.capturar_screenshot_passo(
+            context.driver,
+            step.name,
+            context.indice_passo_atual
+        )
+    
+    # Adiciona screenshot se foi capturado e não é duplicata de falha
+    if nome_arquivo_screenshot:
+        if not hasattr(step, 'screenshots'):
+            step.screenshots = []
+        step.screenshots.append(nome_arquivo_screenshot)
 
 
 def after_scenario(context, scenario):

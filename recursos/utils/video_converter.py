@@ -4,8 +4,18 @@
 Conversor de Vídeo para WebM
 Converte vídeos MP4 problemáticos para WebM (melhor compatibilidade web)
 """
+import os
+import sys
+
+# Suprime avisos do OpenCV durante conversões
+os.environ['OPENCV_LOG_LEVEL'] = 'SILENT'
+os.environ['OPENCV_VIDEOIO_DEBUG'] = '0'
+
 import cv2
 from pathlib import Path
+
+# Desabilita logs do OpenCV
+cv2.setLogLevel(0)
 
 
 def convert_to_webm(input_path, output_path=None):
@@ -50,23 +60,49 @@ def convert_to_webm(input_path, output_path=None):
             'VP80',  # VP8 - Mais compatível
         ]
         
-        out = None
-        for fourcc_str in fourcc_options:
-            try:
-                fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
-                out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
-                
-                if out.isOpened():
-                    print(f"[CONVERTER] Usando codec WebM: {fourcc_str}")
-                    break
-                else:
-                    out.release()
+        # Suprime stderr para evitar avisos do FFmpeg
+        stderr_backup = None
+        devnull = None
+        try:
+            stderr_fd = sys.stderr.fileno()
+            stderr_backup = os.dup(stderr_fd)
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            sys.stderr.flush()
+            os.dup2(devnull, stderr_fd)
+        except (AttributeError, OSError):
+            pass  # Se falhar, continua sem supressão
+        
+        try:
+            out = None
+            codec_usado = None
+            for fourcc_str in fourcc_options:
+                try:
+                    fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
+                    out = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
+                    
+                    if out.isOpened():
+                        codec_usado = fourcc_str
+                        break
+                    else:
+                        out.release()
+                        out = None
+                except Exception:
+                    if out:
+                        out.release()
                     out = None
-            except Exception as e:
-                print(f"[CONVERTER] Codec {fourcc_str} não disponível: {e}")
-                if out:
-                    out.release()
-                out = None
+        finally:
+            # Restaura stderr
+            if stderr_backup is not None and devnull is not None:
+                try:
+                    sys.stderr.flush()
+                    os.dup2(stderr_backup, sys.stderr.fileno())
+                    os.close(stderr_backup)
+                    os.close(devnull)
+                except (OSError, ValueError):
+                    pass
+        
+        if codec_usado:
+            print(f"[CONVERTER] Usando codec WebM: {codec_usado}")
         
         if out is None or not out.isOpened():
             print("[CONVERTER] Nenhum codec WebM disponível")
@@ -127,8 +163,16 @@ def ensure_web_compatible_video(video_path):
         
         print(f"[CONVERTER] Vídeo atual usa codec: {fourcc_str}")
         
-        # Se for MP4V ou outro codec problemático, converte para WebM
+        # Codecs nativos e compatíveis com navegadores (não precisam conversão)
+        compatible_codecs = ['avc1', 'AVC1', 'h264', 'H264', 'MJPG', 'mjpg']
+        
+        # Codecs problemáticos que precisam conversão
         problematic_codecs = ['mp4v', 'MP4V', 'FMP4']
+        
+        # Verifica se é compatível
+        if fourcc_str in compatible_codecs:
+            print(f"[CONVERTER] Codec {fourcc_str} é compatível com navegadores (sem conversão necessária)")
+            return str(video_path)
         
         if fourcc_str in problematic_codecs:
             print(f"[CONVERTER] Codec {fourcc_str} pode ter problemas de compatibilidade")

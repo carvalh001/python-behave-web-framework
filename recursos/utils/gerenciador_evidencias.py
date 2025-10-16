@@ -102,6 +102,67 @@ class GerenciadorDeEvidencias:
             print(f"[SCREENSHOT] Erro ao capturar: {erro}")
             return None
     
+    def capturar_screenshot_ultimo_passo(self, driver, nome_cenario, nome_passo):
+        """
+        Captura screenshot do último passo de um cenário
+        
+        Args:
+            driver: Instância do WebDriver
+            nome_cenario: Nome do cenário
+            nome_passo: Nome do último passo
+            
+        Returns:
+            Nome do arquivo de screenshot criado ou None se falhar
+        """
+        if not self.configuracao.screenshot_ultimo_passo:
+            return None
+        
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+            cenario_sanitizado = self._sanitizar_nome_arquivo(nome_cenario)
+            passo_sanitizado = self._sanitizar_nome_arquivo(nome_passo)
+            nome_arquivo = f'ultimo_passo_{timestamp}_{cenario_sanitizado}_{passo_sanitizado}.png'
+            caminho_completo = self.configuracao.diretorio_screenshots / nome_arquivo
+            
+            driver.save_screenshot(str(caminho_completo))
+            print(f"[SCREENSHOT] Último passo capturado: {nome_arquivo}")
+            
+            return nome_arquivo
+            
+        except Exception as erro:
+            print(f"[SCREENSHOT] Erro ao capturar último passo: {erro}")
+            return None
+    
+    def capturar_screenshot_passo(self, driver, nome_passo, indice_passo):
+        """
+        Captura screenshot de um passo qualquer (quando SCREENSHOT_EM_TODOS_PASSOS=true)
+        
+        Args:
+            driver: Instância do WebDriver
+            nome_passo: Nome do passo
+            indice_passo: Índice do passo no cenário
+            
+        Returns:
+            Nome do arquivo de screenshot criado ou None se falhar
+        """
+        if not self.configuracao.screenshot_em_todos_passos:
+            return None
+        
+        try:
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+            nome_passo_sanitizado = self._sanitizar_nome_arquivo(nome_passo)
+            nome_arquivo = f'passo_{indice_passo}_{timestamp}_{nome_passo_sanitizado}.png'
+            caminho_completo = self.configuracao.diretorio_screenshots / nome_arquivo
+            
+            driver.save_screenshot(str(caminho_completo))
+            print(f"[SCREENSHOT] Passo {indice_passo} capturado: {nome_arquivo}")
+            
+            return nome_arquivo
+            
+        except Exception as erro:
+            print(f"[SCREENSHOT] Erro ao capturar passo: {erro}")
+            return None
+    
     def _sanitizar_nome_arquivo(self, nome):
         """
         Remove caracteres especiais e limita o tamanho do nome do arquivo

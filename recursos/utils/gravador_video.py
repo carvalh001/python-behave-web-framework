@@ -4,13 +4,122 @@
 Gravador de Vídeo para Evidência de Testes
 Captura apenas a janela do navegador com timestamp overlay
 """
-import cv2
+import os
+import sys
+import warnings
+
+# === CONFIGURAÇÕES PARA SUPRIMIR AVISOS DO OPENCV/FFMPEG ===
+# Estas configurações evitam mensagens de erro assustadoras sobre codecs
+# que não estão disponíveis (como OpenH264), mas não afetam a funcionalidade
+
+# Desabilita avisos do OpenCV sobre codecs
+os.environ['OPENCV_VIDEOIO_PRIORITY_MSMF'] = '0'
+os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;udp'
+os.environ['OPENCV_LOG_LEVEL'] = 'SILENT'
+os.environ['OPENCV_VIDEOIO_DEBUG'] = '0'
+
+# Variáveis do FFmpeg para suprimir mensagens de log
+os.environ['FFREPORT'] = 'level=quiet'
+os.environ['AV_LOG_FORCE_NOCOLOR'] = '1'
+
+# Desabilita completamente o carregamento do OpenH264 (codec problemático)
+os.environ['OPENCV_FFMPEG_LOGLEVEL'] = '-8'  # AV_LOG_QUIET
+os.environ['OPENCV_FFMPEG_READ_ATTEMPTS'] = '1'
+os.environ['OPENCV_VIDEOCODEC_SKIP_H264_ENCODER'] = '1'
+os.environ['OPENH264_DISABLED'] = '1'
+
+# Força OpenCV a não tentar carregar plugins externos
+os.environ['OPENCV_VIDEOIO_PLUGINS'] = ''
+
+# Redireciona stderr temporariamente para suprimir mensagens de FFmpeg
+# (as mensagens de erro do FFmpeg são impressas em C++ e não podem ser
+# completamente suprimidas do Python, mas podemos minimizá-las)
+try:
+    _stderr_fd = sys.stderr.fileno()
+    _stderr_backup = os.dup(_stderr_fd)
+    _devnull = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(_devnull, _stderr_fd)
+    
+    try:
+        import cv2
+    finally:
+        # Restaura stderr após importar cv2
+        sys.stderr.flush()
+        os.dup2(_stderr_backup, _stderr_fd)
+        os.close(_devnull)
+        os.close(_stderr_backup)
+except (AttributeError, OSError):
+    # Se der erro ao manipular stderr, importa cv2 normalmente
+    import cv2
+
 import numpy as np
 import pyautogui
 from datetime import datetime
 from pathlib import Path
 import threading
 import time
+
+# Desabilita todos os níveis de log do OpenCV
+cv2.setLogLevel(0)  # 0 = Silent
+warnings.filterwarnings('ignore', category=UserWarning, module='cv2')
+
+
+# === FUNÇÃO AUXILIAR PARA SUPRIMIR STDERR EM WINDOWS ===
+def _suprimir_stderr_contexto():
+    """
+    Context manager que suprime stderr em nível de sistema operacional.
+    Funciona mesmo com código C/C++ que escreve diretamente no console.
+    """
+    import contextlib
+    
+    @contextlib.contextmanager
+    def _suprimir():
+        stderr_dup = None
+        devnull = None
+        stderr_fd = None
+        
+        try:
+            # Tenta obter file descriptor do stderr
+            try:
+                stderr_fd = sys.stderr.fileno()
+            except (AttributeError, OSError, ValueError, IOError) as e:
+                # Se não conseguir, não faz nada (ex: stderr já foi redirecionado)
+                yield
+                return
+            
+            stderr_dup = os.dup(stderr_fd)
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            
+            # Suprime stderr
+            sys.stderr.flush()
+            os.dup2(devnull, stderr_fd)
+            os.close(devnull)
+            devnull = None  # Já foi fechado
+            
+            yield
+            
+        finally:
+            # Restaura stderr se foi inicializado
+            if stderr_dup is not None and stderr_fd is not None:
+                try:
+                    sys.stderr.flush()
+                    os.dup2(stderr_dup, stderr_fd)
+                    os.close(stderr_dup)
+                except (OSError, ValueError, IOError):
+                    pass  # Ignora erros ao restaurar
+            
+            # Fecha devnull se ainda estiver aberto
+            if devnull is not None:
+                try:
+                    os.close(devnull)
+                except OSError:
+                    pass
+    
+    try:
+        return _suprimir()
+    except (AttributeError, OSError):
+        # Se não conseguir suprimir, retorna um context manager que não faz nada
+        return contextlib.nullcontext()
 
 
 class VideoRecorder:
@@ -146,10 +255,10 @@ class VideoRecorder:
         if save and self.frames:
             try:
                 self._save_video()
-                print(f"[VIDEO] Vídeo salvo com sucesso: {Path(self.output_path).name} ({len(self.frames)} frames)")
+                print(f"[VIDEO] Vídeo salvo com sucesso: {Path(self.output_path).name}")
                 return True
             except Exception as e:
-                print(f"[VIDEO] Erro ao salvar vídeo: {e}")
+                print(f"[VIDEO] ERRO ao salvar vídeo: {e}")
                 return False
         else:
             print(f"[VIDEO] Gravação descartada ({len(self.frames)} frames)")
@@ -160,53 +269,58 @@ class VideoRecorder:
         if not self.frames:
             print("[VIDEO] Nenhum frame para salvar")
             return
-            
+        
         # Garante que o diretório existe
         Path(self.output_path).parent.mkdir(parents=True, exist_ok=True)
         
         # Obtém dimensões do primeiro frame
         height, width, _ = self.frames[0].shape
         
-        # Tenta usar H264 (melhor compatibilidade com navegadores)
-        # Se não funcionar, usa XVID como fallback
+        # Tenta usar codecs nativos e compatíveis com navegadores
+        # Forçar uso de codecs que funcionam bem em navegadores
         fourcc_options = [
-            ('avc1', '.mp4'),  # H.264 - Melhor para web
-            ('H264', '.mp4'),  # H.264 alternativo
-            ('X264', '.mp4'),  # x264
-            ('XVID', '.avi'),  # Xvid - Fallback
-            ('mp4v', '.mp4'),  # MP4V - Último recurso
+            ('mp4v', '.mp4'),  # MPEG-4 - MUITO compatível com navegadores
+            ('MJPG', '.mp4'),  # Motion JPEG em MP4 - Funciona em navegadores
+            ('avc1', '.mp4'),  # H.264 (AVC1) - Melhor compatibilidade mas pode falhar
+            ('H264', '.mp4'),  # H.264 alternativo - Nativo no Windows
         ]
         
-        out = None
-        for fourcc_str, ext in fourcc_options:
-            try:
-                # Ajusta extensão do arquivo se necessário
-                output_path_adjusted = str(self.output_path)
-                if not output_path_adjusted.endswith(ext):
-                    output_path_adjusted = output_path_adjusted.rsplit('.', 1)[0] + ext
-                
-                fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
-                out = cv2.VideoWriter(output_path_adjusted, fourcc, self.fps, (width, height))
-                
-                if out.isOpened():
-                    print(f"[VIDEO] Usando codec: {fourcc_str}")
-                    self.output_path = output_path_adjusted
-                    break
-                else:
-                    out.release()
+        # Usa context manager para suprimir stderr durante criação do VideoWriter
+        # Isso evita mensagens assustadoras sobre codecs não disponíveis
+        with _suprimir_stderr_contexto():
+            out = None
+            codec_usado = None
+            
+            for fourcc_str, ext in fourcc_options:
+                try:
+                    # Ajusta extensão do arquivo se necessário
+                    output_path_adjusted = str(self.output_path)
+                    if not output_path_adjusted.endswith(ext):
+                        output_path_adjusted = output_path_adjusted.rsplit('.', 1)[0] + ext
+                    
+                    fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
+                    out = cv2.VideoWriter(output_path_adjusted, fourcc, self.fps, (width, height))
+                    
+                    if out.isOpened():
+                        codec_usado = fourcc_str
+                        self.output_path = output_path_adjusted
+                        break
+                    else:
+                        out.release()
+                        out = None
+                except Exception:
+                    # Ignora erros silenciosamente durante a tentativa de codecs
+                    if out:
+                        out.release()
                     out = None
-            except Exception as e:
-                print(f"[VIDEO] Codec {fourcc_str} não disponível: {e}")
-                if out:
-                    out.release()
-                out = None
+            
+            # Se nenhum codec funcionou, tenta criar VideoWriter sem fourcc
+            if out is None or not out.isOpened():
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                out = cv2.VideoWriter(self.output_path, fourcc, self.fps, (width, height))
+                codec_usado = 'mp4v (padrão)'
         
-        # Se nenhum codec funcionou, tenta criar VideoWriter sem fourcc
-        if out is None or not out.isOpened():
-            print("[VIDEO] AVISO: Nenhum codec preferencial disponível, usando padrão do sistema")
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(self.output_path, fourcc, self.fps, (width, height))
-        
+        # Após sair do context manager (stderr restaurado), verifica se deu certo
         if not out.isOpened():
             raise Exception("Não foi possível criar o arquivo de vídeo")
         
@@ -215,6 +329,10 @@ class VideoRecorder:
             out.write(frame)
             
         out.release()
+        
+        # Informa qual codec foi usado com sucesso
+        if codec_usado:
+            print(f"[VIDEO] Codec selecionado: {codec_usado} | Frames: {len(self.frames)} | FPS: {self.fps}")
         
     def delete_video(self):
         """

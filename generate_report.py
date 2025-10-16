@@ -13,8 +13,35 @@ import platform
 import psutil
 import selenium
 
+def carregar_configuracoes_env():
+    """
+    Carrega configurações do arquivo .env para usar nas mensagens dinâmicas
+    
+    Returns:
+        Dict com as configurações do .env
+    """
+    config = {}
+    env_file = Path('.env')
+    
+    if env_file.exists():
+        try:
+            with open(env_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and '=' in line and not line.startswith('#'):
+                        key, value = line.split('=', 1)
+                        config[key.strip()] = value.strip()
+        except Exception as e:
+            print(f"[AVISO] Erro ao carregar .env: {e}")
+    
+    return config
+
+
 def generate_html_report(json_file='reports/results.json', output_file=None):
     """Gera relatório HTML a partir do JSON do Behave"""
+    
+    # Carrega configurações do .env para mensagens dinâmicas
+    env_config = carregar_configuracoes_env()
     
     # Define a data e hora atuais
     now = datetime.now()
@@ -56,13 +83,24 @@ def generate_html_report(json_file='reports/results.json', output_file=None):
     
     if screenshots_src.exists() and any(screenshots_src.iterdir()):
         screenshots_dest = report_dir / f'screenshots_{timestamp}'
-        shutil.copytree(screenshots_src, screenshots_dest, dirs_exist_ok=True)
-        print(f"[OK] Screenshots copiados para: {screenshots_dest}")
+        screenshots_dest.mkdir(parents=True, exist_ok=True)
         
-        # Cria mapeamento dos screenshots para usar no HTML
-        for screenshot_file in screenshots_dest.iterdir():
+        # Copia APENAS arquivos .png (evita copiar arquivos temporários)
+        arquivos_copiados = 0
+        for screenshot_file in screenshots_src.glob('*.png'):
             if screenshot_file.is_file():
+                shutil.copy2(screenshot_file, screenshots_dest / screenshot_file.name)
                 screenshot_mapping[screenshot_file.name] = f'screenshots_{timestamp}/{screenshot_file.name}'
+                arquivos_copiados += 1
+        
+        print(f"[OK] {arquivos_copiados} screenshot(s) copiado(s) para: {screenshots_dest}")
+        
+        # Limpa diretório original após copiar
+        for screenshot_file in screenshots_src.glob('*.png'):
+            try:
+                screenshot_file.unlink()
+            except Exception:
+                pass
     
     # Move vídeos se existirem e mantém referência
     videos_src = Path('reports/videos')
@@ -71,22 +109,38 @@ def generate_html_report(json_file='reports/results.json', output_file=None):
     
     if videos_src.exists() and any(videos_src.iterdir()):
         videos_dest = report_dir / f'videos_{timestamp}'
-        shutil.copytree(videos_src, videos_dest, dirs_exist_ok=True)
-        print(f"[OK] Vídeos copiados para: {videos_dest}")
+        videos_dest.mkdir(parents=True, exist_ok=True)
         
-        # Tenta converter vídeos MP4V para WebM para melhor compatibilidade
+        # Copia APENAS arquivos de vídeo (mp4, avi, webm)
+        arquivos_video_copiados = 0
+        for video_file in videos_src.iterdir():
+            if video_file.is_file() and video_file.suffix in ['.mp4', '.avi', '.webm']:
+                shutil.copy2(video_file, videos_dest / video_file.name)
+                arquivos_video_copiados += 1
+        
+        print(f"[OK] {arquivos_video_copiados} vídeo(s) copiado(s) para: {videos_dest}")
+        
+        # Tenta converter vídeos com codecs problemáticos (FMP4, MP4V) para WebM
+        # para melhor compatibilidade com navegadores
         try:
             from recursos.utils.video_converter import ensure_web_compatible_video
             
+            videos_convertidos = 0
             for video_file in list(videos_dest.iterdir()):
                 if video_file.is_file() and video_file.suffix in ['.mp4', '.avi']:
-                    print(f"[INFO] Verificando compatibilidade de: {video_file.name}")
+                    print(f"[INFO] Verificando compatibilidade: {video_file.name}")
                     compatible_path = ensure_web_compatible_video(str(video_file))
                     
                     # Se foi convertido para WebM, remove o MP4 original
                     if compatible_path != str(video_file) and Path(compatible_path).exists():
-                        print(f"[INFO] Vídeo convertido para WebM, removendo original")
+                        print(f"[INFO] ✓ Vídeo convertido para WebM (melhor compatibilidade)")
                         video_file.unlink()
+                        videos_convertidos += 1
+                    else:
+                        print(f"[INFO] ✓ Vídeo já está em formato compatível")
+            
+            if videos_convertidos > 0:
+                print(f"[INFO] {videos_convertidos} vídeo(s) convertido(s) para WebM")
         except ImportError:
             print("[AVISO] video_converter não disponível, usando vídeos originais")
         except Exception as e:
@@ -98,6 +152,14 @@ def generate_html_report(json_file='reports/results.json', output_file=None):
                 video_mapping[video_file.name] = f'videos_{timestamp}/{video_file.name}'
         
         print(f"[INFO] Total de vídeos encontrados: {len(video_mapping)}")
+        
+        # Limpa diretório original após copiar e converter
+        for video_file in videos_src.iterdir():
+            try:
+                if video_file.is_file():
+                    video_file.unlink()
+            except Exception:
+                pass
     
     # Lê o arquivo JSON
     with open(json_file, 'r', encoding='utf-8') as f:
@@ -575,6 +637,70 @@ def generate_html_report(json_file='reports/results.json', output_file=None):
             transform: scale(1.02);
         }}
         
+        .screenshots-toggle {{
+            cursor: pointer;
+            padding: 10px 15px;
+            background: #e7f3ff;
+            border-left: 3px solid #2196F3;
+            border-radius: 4px;
+            margin-top: 10px;
+            user-select: none;
+            transition: background 0.2s;
+            font-weight: bold;
+            font-size: 13px;
+        }}
+        
+        .screenshots-toggle:hover {{
+            background: #d0e7ff;
+        }}
+        
+        .screenshots-toggle .toggle-icon {{
+            display: inline-block;
+            transition: transform 0.3s;
+            margin-right: 5px;
+        }}
+        
+        .screenshots-toggle .toggle-icon.expanded {{
+            transform: rotate(90deg);
+        }}
+        
+        .screenshots-container {{
+            margin-top: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }}
+        
+        .screenshots-controls {{
+            padding: 15px 30px;
+            background: #fff;
+            border-bottom: 2px solid #e0e0e0;
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }}
+        
+        .screenshots-controls button {{
+            padding: 10px 20px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            transition: background 0.3s, transform 0.1s;
+        }}
+        
+        .screenshots-controls button:hover {{
+            background: #5568d3;
+            transform: translateY(-2px);
+        }}
+        
+        .screenshots-controls button:active {{
+            transform: translateY(0px);
+        }}
+        
         .video-container {{
             margin-top: 20px;
             padding: 20px;
@@ -826,6 +952,11 @@ def generate_html_report(json_file='reports/results.json', output_file=None):
             </div>
         </div>
         
+        <div class="screenshots-controls">
+            <button onclick="expandAllScreenshots()">▼ Expandir Todas as Evidências</button>
+            <button onclick="collapseAllScreenshots()">▲ Colapsar Todas as Evidências</button>
+        </div>
+        
         <div class="content">
 """
     
@@ -892,34 +1023,57 @@ def generate_html_report(json_file='reports/results.json', output_file=None):
                     html += f"""
                     <div class="error-message">{error_message}</div>
 """
+                
+                # Procura por screenshots deste step (para TODOS os passos, não só falhas)
+                step_screenshots = []
+                if screenshot_mapping:
+                    # Sanitiza exatamente como o gerenciador de evidências faz
+                    caracteres_proibidos = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
+                    step_name_sanitized = step_name.replace(" ", "_")
+                    for caractere in caracteres_proibidos:
+                        step_name_sanitized = step_name_sanitized.replace(caractere, "_")
+                    step_name_sanitized = step_name_sanitized[:50]
                     
-                    # Procura por screenshots deste step
-                    step_screenshots = []
-                    if screenshot_mapping:
-                        # Sanitiza exatamente como o gerenciador de evidências faz
-                        caracteres_proibidos = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
-                        step_name_sanitized = step_name.replace(" ", "_")
-                        for caractere in caracteres_proibidos:
-                            step_name_sanitized = step_name_sanitized.replace(caractere, "_")
-                        step_name_sanitized = step_name_sanitized[:50]
-                        
-                        for screenshot_file, screenshot_path in screenshot_mapping.items():
-                            # Match por nome do step (busca pelo nome sanitizado no arquivo)
-                            if step_name_sanitized and step_name_sanitized in screenshot_file:
-                                step_screenshots.append(screenshot_path)
-                                break  # Só pega o primeiro match
-                    
-                    # Adiciona screenshots ao HTML
-                    for screenshot_path in step_screenshots:
-                        screenshot_id = screenshot_path.replace('/', '_').replace('.', '_')
-                        error_type = "Erro" if status == 'error' else "Falha"
-                        html += f"""
+                    for screenshot_file, screenshot_path in screenshot_mapping.items():
+                        # Match por nome do step (busca pelo nome sanitizado no arquivo)
+                        if step_name_sanitized and step_name_sanitized in screenshot_file:
+                            step_screenshots.append(screenshot_path)
+                            # Não break - pode haver múltiplos screenshots do mesmo passo
+                
+                # Adiciona screenshots ao HTML (com toggle se não for falha)
+                if step_screenshots:
+                    if status in ['failed', 'error']:
+                        # Para falhas, mostra expandido
+                        for screenshot_path in step_screenshots:
+                            screenshot_id = screenshot_path.replace('/', '_').replace('.', '_')
+                            error_type = "Erro" if status == 'error' else "Falha"
+                            html += f"""
                     <div class="screenshot-container">
                         <div class="screenshot-title">📸 Screenshot do {error_type}:</div>
                         <img src="{screenshot_path}" 
                              alt="Screenshot do erro" 
                              class="screenshot-image"
                              onclick="openModal('modal_{screenshot_id}', '{screenshot_path}')">
+                    </div>
+"""
+                    else:
+                        # Para passos normais, mostra colapsado
+                        html += f"""
+                    <div class="screenshots-toggle" onclick="toggleScreenshots(this)">
+                        <span class="toggle-icon">▶</span> 📸 {len(step_screenshots)} evidência(s)
+                    </div>
+                    <div class="screenshots-container" style="display: none;">
+"""
+                        for screenshot_path in step_screenshots:
+                            screenshot_id = screenshot_path.replace('/', '_').replace('.', '_')
+                            html += f"""
+                        <img src="{screenshot_path}" 
+                             alt="Screenshot do passo" 
+                             class="screenshot-image"
+                             onclick="openModal('modal_{screenshot_id}', '{screenshot_path}')"
+                             style="max-width: 100%; margin-bottom: 10px; display: block;">
+"""
+                        html += """
                     </div>
 """
             
@@ -957,13 +1111,33 @@ def generate_html_report(json_file='reports/results.json', output_file=None):
                         break
             
             if scenario_video_file:
+                # Determina o status do cenário para mensagem dinâmica
+                scenario_status = scenario.get('status', 'undefined')
+                scenario_tags = scenario.get('tags', [])
+                
+                # Gera mensagem dinâmica baseada nas configurações do .env
+                video_message = "💡 "
+                if env_config.get('GRAVAR_VIDEO_SEMPRE', '').lower() in ('true', 'yes', '1', 'sim'):
+                    video_message += "Vídeo gravado em todos os cenários (GRAVAR_VIDEO_SEMPRE=true)"
+                elif 'video_always' in scenario_tags:
+                    video_message += "Vídeo gravado pela tag @video_always"
+                elif scenario_status in ['failed', 'error']:
+                    video_message += "Vídeo gravado porque o cenário falhou"
+                else:
+                    video_message += "Vídeo de evidência capturado"
+                
                 # Detecta tipo de vídeo pela extensão
-                video_type = "video/mp4" if scenario_video_file.endswith('.mp4') else "video/x-msvideo"
+                if scenario_video_file.endswith('.webm'):
+                    video_type = "video/webm"
+                elif scenario_video_file.endswith('.avi'):
+                    video_type = "video/x-msvideo"
+                else:
+                    video_type = "video/mp4"
                 
                 html += f"""
                     <div class="video-container">
                         <h4>🎥 Vídeo de Evidência</h4>
-                        <video controls preload="metadata" width="100%" style="max-width: 900px;" controlsList="nodownload">
+                        <video controls preload="metadata" width="100%" style="max-width: 900px;">
                             <source src="{scenario_video_file}" type="{video_type}">
                             <source src="{scenario_video_file}" type="video/mp4">
                             <source src="{scenario_video_file}" type="video/webm">
@@ -971,7 +1145,7 @@ def generate_html_report(json_file='reports/results.json', output_file=None):
                             <p>Você pode <a href="{scenario_video_file}" download>baixar o vídeo</a> para assistir.</p>
                         </video>
                         <p class="video-info">
-                            <small>💡 O vídeo foi gravado porque o cenário falhou ou possui a tag @video_always</small>
+                            <small>{video_message}</small>
                         </p>
                         <div class="video-controls-info">
                             <small>
@@ -1172,6 +1346,40 @@ def generate_html_report(json_file='reports/results.json', output_file=None):
             });
             
             applyFilters();
+        }
+        
+        // Toggle individual de screenshots
+        function toggleScreenshots(element) {
+            const container = element.nextElementSibling;
+            const icon = element.querySelector('.toggle-icon');
+            
+            if (container.style.display === 'none') {
+                container.style.display = 'block';
+                icon.classList.add('expanded');
+            } else {
+                container.style.display = 'none';
+                icon.classList.remove('expanded');
+            }
+        }
+        
+        // Expandir todos os screenshots
+        function expandAllScreenshots() {
+            document.querySelectorAll('.screenshots-container').forEach(container => {
+                container.style.display = 'block';
+            });
+            document.querySelectorAll('.screenshots-toggle .toggle-icon').forEach(icon => {
+                icon.classList.add('expanded');
+            });
+        }
+        
+        // Colapsar todos os screenshots
+        function collapseAllScreenshots() {
+            document.querySelectorAll('.screenshots-container').forEach(container => {
+                container.style.display = 'none';
+            });
+            document.querySelectorAll('.screenshots-toggle .toggle-icon').forEach(icon => {
+                icon.classList.remove('expanded');
+            });
         }
     </script>
 </body>
