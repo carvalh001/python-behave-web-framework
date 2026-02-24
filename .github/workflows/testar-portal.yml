@@ -63,6 +63,7 @@ jobs:
 
       - name: Publicar resultados dos testes (JUnit)
         if: ${{ !cancelled() }}
+        id: publish-tests
         uses: EnricoMi/publish-unit-test-result-action@v2
         with:
           files: reports/**/*.xml
@@ -70,6 +71,68 @@ jobs:
           job_summary: true
           fail_on: test failures
           action_fail: false
+          check_run_annotations: all tests, skipped tests
+          json_file: reports/test-results.json
+          json_test_case_results: true
+
+      - name: Tabela de cenários no Job Summary
+        if: ${{ !cancelled() && always() && steps.publish-tests.outcome == 'success' }}
+        run: |
+          if [ ! -f reports/test-results.json ]; then exit 0; fi
+          python3 << 'PYEOF'
+          import json
+          import os
+          import re
+          def nome_como_na_feature(raw):
+              """Exibe o nome do cenário como na feature (sem prefixo Cenário:/Scenario:)."""
+              name = (raw or "").strip()
+              for prefix in ("Cenário: ", "Esquema do Cenário: ", "Scenario: ", "Scenario Outline: "):
+                  if name.startswith(prefix):
+                      name = name[len(prefix):].strip()
+                      break
+              # Esquema do cenário: "Login com cada perfil do sistema. Row 1" -> "Login com cada perfil do sistema (exemplo 1)"
+              m = re.match(r"^(.+?)\.\s*Row\s*(\d+)\s*$", name, re.IGNORECASE)
+              if m:
+                  name = f"{m.group(1).strip()} (exemplo {m.group(2)})"
+              return name or "—"
+          path = "reports/test-results.json"
+          if not os.path.exists(path):
+              exit(0)
+          with open(path, "r", encoding="utf-8") as f:
+              data = json.load(f)
+          cases = data.get("cases", [])
+          if not cases:
+              exit(0)
+          lines = [
+              "## Cenários Behave (passou / falhou)",
+              "",
+              "| Cenário | Resultado | Tempo |",
+              "|---------|----------|-------|",
+          ]
+          for c in cases:
+              raw_name = c.get("test_name") or c.get("class_name", "")
+              name = nome_como_na_feature(raw_name)
+              states = c.get("states", {})
+              if states.get("success"):
+                  result = "✅ Passou"
+                  run = states["success"][0]
+              elif states.get("fail"):
+                  result = "❌ Falhou"
+                  run = states["fail"][0]
+              elif states.get("skip") or states.get("skipped"):
+                  result = "⏭️ Pulado"
+                  run = (states.get("skip") or states.get("skipped") or [{}])[0]
+              else:
+                  result = "—"
+                  run = {}
+              t = run.get("time", 0)
+              time_str = f"{float(t):.2f}s" if isinstance(t, (int, float)) else str(t)
+              lines.append(f"| {name} | {result} | {time_str} |")
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as f:
+                  f.write("\n".join(lines) + "\n")
+          PYEOF
 
       - name: Gerar relatório HTML
         if: ${{ !cancelled() }}
