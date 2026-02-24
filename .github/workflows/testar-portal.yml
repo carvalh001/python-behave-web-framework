@@ -1,6 +1,8 @@
 name: Testar Portal (Behave E2E)
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       url_base:
@@ -44,9 +46,40 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Criar diretório de relatórios
+        run: mkdir -p reports
+
       - name: Run Behave (Portal)
-        run: behave features/portal/autenticacao.feature --tags=@portal -f pretty
+        run: >
+          behave features/portal/autenticacao.feature --tags=@portal
+          --junit --junit-directory reports
         env:
           URL_BASE_SISTEMA: ${{ env.URL_BASE_SISTEMA }}
           NAVEGADOR_TIPO: ${{ env.NAVEGADOR_TIPO }}
           NAVEGADOR_HEADLESS: ${{ env.NAVEGADOR_HEADLESS }}
+
+      - name: Publicar resultados dos testes (JUnit)
+        if: ${{ !cancelled() }}
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: reports/**/*.xml
+          check_name: Behave E2E (Portal)
+          job_summary: true
+          fail_on: test failures
+          action_fail: false
+
+      - name: Gerar relatório HTML
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -f reports/results.json ]; then
+            python generate_report.py
+          else
+            echo "Arquivo results.json não encontrado; pulando geração do relatório."
+          fi
+
+      - name: Fazer upload do relatório (artefato)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: behave-html-report
+          path: reports/
