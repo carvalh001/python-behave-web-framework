@@ -1,0 +1,52 @@
+name: Testar Portal (Behave E2E)
+
+on:
+  workflow_dispatch:
+    inputs:
+      url_base:
+        description: 'URL base do portal (frontend)'
+        required: false
+        default: 'https://portal-colaboradores.up.railway.app'
+  schedule:
+    # Executa diariamente às 6h UTC (3h BRT)
+    - cron: '0 6 * * *'
+  repository_dispatch:
+    types: [run-portal-tests]
+
+env:
+  URL_BASE_SISTEMA: ${{ github.event.inputs.url_base || 'https://portal-colaboradores.up.railway.app' }}
+  NAVEGADOR_TIPO: chrome
+  NAVEGADOR_HEADLESS: 'true'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          install-chromedriver: true
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-behave-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Behave (Portal)
+        run: behave features/portal/autenticacao.feature --tags=@portal -f pretty
+        env:
+          URL_BASE_SISTEMA: ${{ env.URL_BASE_SISTEMA }}
+          NAVEGADOR_TIPO: ${{ env.NAVEGADOR_TIPO }}
+          NAVEGADOR_HEADLESS: ${{ env.NAVEGADOR_HEADLESS }}
