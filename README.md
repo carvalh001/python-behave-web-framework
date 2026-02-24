@@ -72,13 +72,33 @@ Siepex/
 
 ### 1. Instalar Dependências
 
+**Windows (PowerShell/CMD):**
+
 ```bash
-# Ativar ambiente virtual (recomendado)
+# Criar ambiente virtual (se ainda não existir)
+python -m venv venv
+
+# Ativar ambiente virtual
 .\venv\Scripts\activate
 
 # Instalar dependências
 pip install -r requirements.txt
 ```
+
+**Linux e macOS:**
+
+```bash
+# Criar ambiente virtual (se ainda não existir)
+python3 -m venv venv
+
+# Ativar ambiente virtual
+source venv/bin/activate
+
+# Instalar dependências
+pip install -r requirements.txt
+```
+
+> **Linux:** Se precisar do Chrome para os testes, instale o navegador (ex.: `sudo apt install chromium-browser` no Ubuntu/Debian ou `chromium` no Fedora). O `webdriver-manager` cuida do driver automaticamente.
 
 ### 2. Criar Arquivo `.env`
 

@@ -1,10 +1,11 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Gerador de RelatÃ³rio HTML para resultados do Behave
-LÃª o arquivo JSON e gera um HTML visual com suporte correto a UTF-8
+Gerador de Relatório HTML para resultados do Behave.
+Lê o arquivo JSON e gera um HTML visual com suporte correto a UTF-8.
 """
 import json
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 import shutil
@@ -161,6 +162,14 @@ def generate_html_report(json_file='reports/results.json', output_file=None):
             except Exception:
                 pass
     
+    # Sanitiza nome de cenário/passo como o gerenciador de evidências (para match de arquivos)
+    def _sanitizar_nome_arquivo(nome):
+        caracteres_proibidos = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
+        nome_limpo = (nome or '').replace(" ", "_")
+        for c in caracteres_proibidos:
+            nome_limpo = nome_limpo.replace(c, "_")
+        return nome_limpo[:50]
+
     # Lê o arquivo JSON
     with open(json_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
@@ -811,12 +820,12 @@ def generate_html_report(json_file='reports/results.json', output_file=None):
         <div class="execution-info">
             <div class="info-header" onclick="toggleInfo(this)">
                 <span class="toggle-icon">▶</span>
-                ℹ️ Informações de Execução e Ambiente
+                Informações de Execução e Ambiente
             </div>
             <div class="info-content">
                 <div class="info-grid">
                     <div class="info-section">
-                        <h3>â±ï¸ Execução</h3>
+                        <h3>Execução</h3>
                         <div class="info-item">
                             <span class="info-label">Duração Total:</span>
                             <span class="info-value">{duration_formatted}</span>
@@ -941,7 +950,7 @@ def generate_html_report(json_file='reports/results.json', output_file=None):
             <div class="search-container">
                 <input type="text" 
                        id="searchInput" 
-                       placeholder="ðŸ” Buscar cenários ou steps..." 
+                       placeholder="Buscar cenários ou steps..." 
                        onkeyup="filterScenarios()">
             </div>
             <div class="filter-info">
@@ -999,10 +1008,17 @@ def generate_html_report(json_file='reports/results.json', output_file=None):
                     </div>
                     <div class="scenario-steps {expanded_class}">
 """
-            
+            # Nome do cenário sanitizado como no gerenciador de evidências (para vincular screenshots/vídeo ao cenário correto, ex.: Esquema do Cenário @1.1, @1.2, @1.3)
+            scenario_name_ascii = unicodedata.normalize('NFKD', scenario_name).encode('ASCII', 'ignore').decode('ASCII')
+            scenario_name_sanitized = _sanitizar_nome_arquivo(scenario_name_ascii)
+            total_passos_cenario = len(scenario.get('steps', []))
+            indice_passo = 0
+
             # Adiciona cada step (usa contador global)
             for step in scenario.get('steps', []):
                 global_step_counter += 1
+                indice_passo += 1
+                eh_ultimo_passo_cenario = (indice_passo == total_passos_cenario)
                 keyword = step.get('keyword', '')
                 step_name = step.get('name', '')
                 result = step.get('result', {})
@@ -1024,21 +1040,20 @@ def generate_html_report(json_file='reports/results.json', output_file=None):
                     <div class="error-message">{error_message}</div>
 """
                 
-                # Procura por screenshots deste step (para TODOS os passos, não só falhas)
+                # Procura por screenshots deste step vinculados a ESTE cenário (evita misturar evidências de Esquema do Cenário @1.1, @1.2, @1.3)
+                # Mantém apenas uma evidência final por teste: em passos que passaram, só mostra screenshot de "ultimo_passo"
                 step_screenshots = []
-                if screenshot_mapping:
-                    # Sanitiza exatamente como o gerenciador de evidências faz
-                    caracteres_proibidos = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
-                    step_name_sanitized = step_name.replace(" ", "_")
-                    for caractere in caracteres_proibidos:
-                        step_name_sanitized = step_name_sanitized.replace(caractere, "_")
-                    step_name_sanitized = step_name_sanitized[:50]
-                    
+                if screenshot_mapping and scenario_name_sanitized:
+                    step_name_sanitized = _sanitizar_nome_arquivo(step_name)
                     for screenshot_file, screenshot_path in screenshot_mapping.items():
-                        # Match por nome do step (busca pelo nome sanitizado no arquivo)
-                        if step_name_sanitized and step_name_sanitized in screenshot_file:
+                        if not step_name_sanitized or step_name_sanitized not in screenshot_file:
+                            continue
+                        if scenario_name_sanitized not in screenshot_file:
+                            continue
+                        if status in ['failed', 'error']:
                             step_screenshots.append(screenshot_path)
-                            # Não break - pode haver múltiplos screenshots do mesmo passo
+                        elif 'ultimo_passo' in screenshot_file and eh_ultimo_passo_cenario:
+                            step_screenshots.append(screenshot_path)
                 
                 # Adiciona screenshots ao HTML (com toggle se não for falha)
                 if step_screenshots:
@@ -1077,18 +1092,8 @@ def generate_html_report(json_file='reports/results.json', output_file=None):
                     </div>
 """
             
-            # Adiciona vídeo se o cenário tiver um associado
+            # Adiciona vídeo se o cenário tiver um associado (usa scenario_name_sanitized já calculado acima)
             scenario_video_file = None
-            
-            # Tenta encontrar vídeo baseado no nome do cenário
-            # Normaliza para ASCII para fazer matching correto
-            import unicodedata
-            scenario_name_normalized = unicodedata.normalize('NFKD', scenario_name)
-            scenario_name_ascii = scenario_name_normalized.encode('ASCII', 'ignore').decode('ASCII')
-            scenario_name_sanitized = "".join(
-                c if c.isalnum() or c in (' ', '-', '_') else '_' 
-                for c in scenario_name_ascii
-            ).strip().replace(' ', '_')[:100]  # Substitui espaços por underscores
             
             # Procura vídeo que contenha o nome sanitizado do cenário
             for video_file, video_path in video_mapping.items():
@@ -1386,11 +1391,10 @@ def generate_html_report(json_file='reports/results.json', output_file=None):
 </html>
 """
     
-    # Salva o arquivo com encoding UTF-8
+    # Salva o arquivo em UTF-8 (utf-8-sig adiciona BOM para melhor reconhecimento no Windows)
     output_path = Path(output_file)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    with open(output_file, 'w', encoding='utf-8') as f:
+    with open(output_file, 'w', encoding='utf-8-sig', newline='\n') as f:
         f.write(html)
     
     print(f"\n{'='*60}")
